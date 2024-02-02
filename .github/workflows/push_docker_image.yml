@@ -12,7 +12,7 @@ on:
         - "*"
 
 env:
-  DOCKER_REPO: planetariumhq/ninechronicles-dataprovider
+  DOCKER_REPO: atralupus/ninechronicles-dataprovider
 
 jobs:
   build_and_push:
