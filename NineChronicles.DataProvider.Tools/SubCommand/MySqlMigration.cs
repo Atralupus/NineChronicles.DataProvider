@@ -38,77 +38,20 @@ namespace NineChronicles.DataProvider.Tools.SubCommand
     {
         private const string AgentDbName = "Agents";
         private const string AvatarDbName = "Avatars";
-        private const string CCDbName = "CombinationConsumables";
-        private const string CEDbName = "CombinationEquipments";
-        private const string IEDbName = "ItemEnhancements";
-        private const string UEDbName = "UserEquipments";
-        private const string UCTDbName = "UserCostumes";
-        private const string UMDbName = "UserMaterials";
-        private const string UCDbName = "UserConsumables";
-        private const string USDbName = "UserStakings";
-        private const string UMCDbName = "UserMonsterCollections";
-        private const string UNCGDbName = "UserNCGs";
-        private const string UCYDbName = "UserCrystals";
-        private const string EDbName = "Equipments";
-        private const string SCDbName = "ShopConsumables";
-        private const string SEDbName = "ShopEquipments";
-        private const string SCTDbName = "ShopCostumes";
-        private const string SMDbName = "ShopMaterials";
         private string BARDbName = "BattleArenaRanking";
         private string fbBARDbName = "BattleArenaRanking";
-        private string fbUSDbName = "UserStakings";
-        private string URDbName = "UserRunes";
         private string _connectionString;
         private IStore _baseStore;
         private BlockChain _baseChain;
-        private StreamWriter _ccBulkFile;
-        private StreamWriter _ceBulkFile;
-        private StreamWriter _ieBulkFile;
-        private StreamWriter _ueBulkFile;
-        private StreamWriter _uctBulkFile;
-        private StreamWriter _uiBulkFile;
-        private StreamWriter _umBulkFile;
-        private StreamWriter _ucBulkFile;
-        private StreamWriter _usBulkFile;
-        private StreamWriter _fbUsBulkFile;
-        private StreamWriter _umcBulkFile;
-        private StreamWriter _uncgBulkFile;
-        private StreamWriter _ucyBulkFile;
-        private StreamWriter _eBulkFile;
-        private StreamWriter _scBulkFile;
-        private StreamWriter _seBulkFile;
-        private StreamWriter _sctBulkFile;
-        private StreamWriter _smBulkFile;
         private StreamWriter _barBulkFile;
         private StreamWriter _fbBarBulkFile;
         private StreamWriter _urBulkFile;
         private StreamWriter _agentBulkFile;
         private StreamWriter _avatarBulkFile;
         private List<string> _agentList;
-        private List<string> _hourGlassAgentList;
-        private List<string> _apStoneAgentList;
         private List<string> _avatarList;
-        private List<string> _ccFiles;
-        private List<string> _ceFiles;
-        private List<string> _ieFiles;
-        private List<string> _ueFiles;
-        private List<string> _uctFiles;
-        private List<string> _uiFiles;
-        private List<string> _umFiles;
-        private List<string> _ucFiles;
-        private List<string> _usFiles;
-        private List<string> _fbUsFiles;
-        private List<string> _umcFiles;
-        private List<string> _uncgFiles;
-        private List<string> _ucyFiles;
-        private List<string> _eFiles;
-        private List<string> _scFiles;
-        private List<string> _seFiles;
-        private List<string> _sctFiles;
-        private List<string> _smFiles;
         private List<string> _barFiles;
         private List<string> _fbBarFiles;
-        private List<string> _urFiles;
         private List<string> _agentFiles;
         private List<string> _avatarFiles;
 
@@ -229,35 +172,13 @@ namespace NineChronicles.DataProvider.Tools.SubCommand
 
             Console.WriteLine("Start migration.");
 
-            // files to store bulk file paths (new file created every 10000 blocks for bulk load performance)
-            _ccFiles = new List<string>();
-            _ceFiles = new List<string>();
-            _ieFiles = new List<string>();
-            _ueFiles = new List<string>();
-            _uctFiles = new List<string>();
-            _uiFiles = new List<string>();
-            _umFiles = new List<string>();
-            _ucFiles = new List<string>();
-            _usFiles = new List<string>();
-            _fbUsFiles = new List<string>();
-            _umcFiles = new List<string>();
-            _uncgFiles = new List<string>();
-            _ucyFiles = new List<string>();
-            _eFiles = new List<string>();
-            _scFiles = new List<string>();
-            _seFiles = new List<string>();
-            _sctFiles = new List<string>();
-            _smFiles = new List<string>();
             _barFiles = new List<string>();
             _fbBarFiles = new List<string>();
-            _urFiles = new List<string>();
             _agentFiles = new List<string>();
             _avatarFiles = new List<string>();
 
             // lists to keep track of inserted addresses to minimize duplicates
             _agentList = new List<string>();
-            _hourGlassAgentList = new List<string>();
-            _apStoneAgentList = new List<string>();
             _avatarList = new List<string>();
 
             CreateBulkFiles();
@@ -282,1236 +203,362 @@ namespace NineChronicles.DataProvider.Tools.SubCommand
             int shopOrderCount = 0;
             bool finalizeBaranking = false;
 
-            try
+            // try
+            // {
+            var tipHash = _baseStore.IndexBlockHash(_baseChain.Id, _baseChain.Tip.Index);
+            var tip = _baseStore.GetBlock((BlockHash)tipHash);
+            var exec = _baseChain.EvaluateBlock(tip);
+            var ev = exec.Last();
+            var inputState = new Account(blockChainStates.GetAccountState(ev.InputContext.PreviousState));
+            var outputState = new Account(blockChainStates.GetAccountState(ev.OutputState));
+            var avatarCount = 0;
+            AvatarState avatarState;
+            int interval = 10000000;
+            int intervalCount = 0;
+            var sheets = outputState.GetSheets(
+                sheetTypes: new[]
+                {
+                    typeof(RuneSheet),
+                });
+            var arenaSheet = outputState.GetSheet<ArenaSheet>();
+            var arenaData = arenaSheet.GetRoundByBlockIndex(tip.Index);
+
+            Console.WriteLine("2");
+            var prevArenaEndIndex = arenaData.StartBlockIndex - 1;
+            var prevArenaData = arenaSheet.GetRoundByBlockIndex(prevArenaEndIndex);
+            var finalizeBarankingTip = prevArenaEndIndex;
+            fbBARDbName = $"{fbBARDbName}_{prevArenaData.ChampionshipId}_{prevArenaData.Round}";
+
+            connection.Open();
+            var preBarQuery = $"SELECT `BlockIndex` FROM data_provider.{fbBARDbName} limit 1";
+            var preBarCmd = new MySqlCommand(preBarQuery, connection);
+
+            var dataReader = preBarCmd.ExecuteReader();
+            long prevBarDbTip = 0;
+            Console.WriteLine("3");
+            while (dataReader.Read())
             {
-                var tipHash = _baseStore.IndexBlockHash(_baseChain.Id, _baseChain.Tip.Index);
-                var tip = _baseStore.GetBlock((BlockHash)tipHash);
-                var exec = _baseChain.EvaluateBlock(tip);
-                var ev = exec.Last();
-                var inputState = new Account(blockChainStates.GetAccountState(ev.InputContext.PreviousState));
-                var outputState = new Account(blockChainStates.GetAccountState(ev.OutputState));
-                var avatarCount = 0;
-                AvatarState avatarState;
-                int interval = 10000000;
-                int intervalCount = 0;
-                var sheets = outputState.GetSheets(
-                    sheetTypes: new[]
+                Console.WriteLine("{0}", dataReader.GetInt64(0));
+                prevBarDbTip = dataReader.GetInt64(0);
+            }
+
+            connection.Close();
+            Console.WriteLine("4");
+            if (prevBarDbTip != 0 && prevBarDbTip < finalizeBarankingTip)
+            {
+                finalizeBaranking = true;
+            }
+
+            if (finalizeBaranking)
+            {
+                try
+                {
+                    Console.WriteLine($"Finalize {fbBARDbName} Table!");
+                    var fbTipHash = _baseStore.IndexBlockHash(_baseChain.Id, finalizeBarankingTip);
+                    var fbTip = _baseStore.GetBlock((BlockHash)fbTipHash!);
+                    var fbExec = _baseChain.EvaluateBlock(fbTip);
+                    var fbEv = fbExec.Last();
+                    var fbOutputState = new Account(blockChainStates.GetAccountState(ev.OutputState));
+                    var fbArenaSheet = fbOutputState.GetSheet<ArenaSheet>();
+                    var fbArenaData = fbArenaSheet.GetRoundByBlockIndex(fbTip.Index);
+                    List<string> fbAgents = new List<string>();
+                    var fbavatarCount = 0;
+
+                    Console.WriteLine("5");
+
+                    foreach (var fbAvatar in avatars)
                     {
-                        typeof(RuneSheet),
-                    });
-                var arenaSheet = outputState.GetSheet<ArenaSheet>();
-                var arenaData = arenaSheet.GetRoundByBlockIndex(tip.Index);
-
-                Console.WriteLine("2");
-                var prevArenaEndIndex = arenaData.StartBlockIndex - 1;
-                var prevArenaData = arenaSheet.GetRoundByBlockIndex(prevArenaEndIndex);
-                var finalizeBarankingTip = prevArenaEndIndex;
-                fbBARDbName = $"{fbBARDbName}_{prevArenaData.ChampionshipId}_{prevArenaData.Round}";
-
-                connection.Open();
-                var preBarQuery = $"SELECT `BlockIndex` FROM data_provider.{fbBARDbName} limit 1";
-                var preBarCmd = new MySqlCommand(preBarQuery, connection);
-
-                var dataReader = preBarCmd.ExecuteReader();
-                long prevBarDbTip = 0;
-                Console.WriteLine("3");
-                while (dataReader.Read())
-                {
-                    Console.WriteLine("{0}", dataReader.GetInt64(0));
-                    prevBarDbTip = dataReader.GetInt64(0);
-                }
-
-                connection.Close();
-                Console.WriteLine("4");
-                if (prevBarDbTip != 0 && prevBarDbTip < finalizeBarankingTip)
-                {
-                    finalizeBaranking = true;
-                }
-
-                if (finalizeBaranking)
-                {
-                    try
-                    {
-                        Console.WriteLine($"Finalize {fbBARDbName} Table!");
-                        var fbTipHash = _baseStore.IndexBlockHash(_baseChain.Id, finalizeBarankingTip);
-                        var fbTip = _baseStore.GetBlock((BlockHash)fbTipHash!);
-                        var fbExec = _baseChain.EvaluateBlock(fbTip);
-                        var fbEv = fbExec.Last();
-                        var fbOutputState = new Account(blockChainStates.GetAccountState(ev.OutputState));
-                        var fbArenaSheet = fbOutputState.GetSheet<ArenaSheet>();
-                        var fbArenaData = fbArenaSheet.GetRoundByBlockIndex(fbTip.Index);
-                        List<string> fbAgents = new List<string>();
-                        var fbavatarCount = 0;
-
-                        fbUSDbName = $"{fbUSDbName}_{fbTip.Index}";
-                        Console.WriteLine("5");
-
-                        foreach (var fbAvatar in avatars)
+                        try
                         {
+                            fbavatarCount++;
+                            Console.WriteLine("Migrating {0}/{1}", fbavatarCount, avatars.Count);
+                            AvatarState fbAvatarState;
+                            var fbAvatarAddress = new Address(fbAvatar);
                             try
                             {
-                                fbavatarCount++;
-                                Console.WriteLine("Migrating {0}/{1}", fbavatarCount, avatars.Count);
-                                AvatarState fbAvatarState;
-                                var fbAvatarAddress = new Address(fbAvatar);
-                                try
-                                {
-                                    fbAvatarState = fbOutputState.GetAvatarStateV2(fbAvatarAddress);
-                                }
-                                catch (Exception ex)
-                                {
-                                    fbAvatarState = fbOutputState.GetAvatarState(fbAvatarAddress);
-                                }
-
-                                var fbAvatarLevel = fbAvatarState.level;
-
-                                var fbArenaScoreAdr =
-                                ArenaScore.DeriveAddress(fbAvatarAddress, fbArenaData.ChampionshipId, fbArenaData.Round);
-                                var fbArenaInformationAdr =
-                                    ArenaInformation.DeriveAddress(fbAvatarAddress, fbArenaData.ChampionshipId, fbArenaData.Round);
-                                fbOutputState.TryGetArenaInformation(fbArenaInformationAdr, out var fbCurrentArenaInformation);
-                                fbOutputState.TryGetArenaScore(fbArenaScoreAdr, out var fbOutputArenaScore);
-                                if (fbCurrentArenaInformation != null && fbOutputArenaScore != null)
-                                {
-                                    _fbBarBulkFile.WriteLine(
-                                        $"{fbTip.Index};" +
-                                        $"{fbAvatarState.agentAddress.ToString()};" +
-                                        $"{fbAvatarAddress.ToString()};" +
-                                        $"{fbAvatarLevel};" +
-                                        $"{fbArenaData.ChampionshipId};" +
-                                        $"{fbArenaData.Round};" +
-                                        $"{fbArenaData.ArenaType.ToString()};" +
-                                        $"{fbOutputArenaScore.Score};" +
-                                        $"{fbCurrentArenaInformation.Win};" +
-                                        $"{fbCurrentArenaInformation.Win};" +
-                                        $"{fbCurrentArenaInformation.Lose};" +
-                                        $"{fbCurrentArenaInformation.Ticket};" +
-                                        $"{fbCurrentArenaInformation.PurchasedTicketCount};" +
-                                        $"{fbCurrentArenaInformation.TicketResetCount};" +
-                                        $"{fbArenaData.EntranceFee};" +
-                                        $"{fbArenaData.TicketPrice};" +
-                                        $"{fbArenaData.AdditionalTicketPrice};" +
-                                        $"{fbArenaData.RequiredMedalCount};" +
-                                        $"{fbArenaData.StartBlockIndex};" +
-                                        $"{fbArenaData.EndBlockIndex};" +
-                                        $"{0};" +
-                                        $"{fbTip.Timestamp.UtcDateTime:yyyy-MM-dd}"
-                                    );
-                                }
-
-                                if (!fbAgents.Contains(fbAvatarState.agentAddress.ToString()))
-                                {
-                                    fbAgents.Add(fbAvatarState.agentAddress.ToString());
-
-                                    if (fbOutputState.TryGetStakeStateV2(fbAvatarState.agentAddress, out StakeStateV2 fbStakeState2))
-                                    {
-                                        var fbStakeStateAddress = StakeStateV2.DeriveAddress(fbAvatarState.agentAddress);
-                                        var fbCurrency = fbOutputState.GetGoldCurrency();
-                                        var fbStakedBalance = fbOutputState.GetBalance(fbStakeStateAddress, fbCurrency);
-                                        _fbUsBulkFile.WriteLine(
-                                            $"{fbTip.Index};" +
-                                            "V3;" +
-                                            $"{fbAvatarState.agentAddress.ToString()};" +
-                                            $"{Convert.ToDecimal(fbStakedBalance.GetQuantityString())};" +
-                                            $"{fbStakeState2.StartedBlockIndex};" +
-                                            $"{fbStakeState2.ReceivedBlockIndex};" +
-                                            $"{fbStakeState2.CancellableBlockIndex}"
-                                        );
-                                    }
-
-                                    if (fbOutputState.TryGetStakeState(fbAvatarState.agentAddress, out StakeState fbStakeState))
-                                    {
-                                        var fbStakeStateAddress = StakeState.DeriveAddress(fbAvatarState.agentAddress);
-                                        var fbCurrency = fbOutputState.GetGoldCurrency();
-                                        var fbStakedBalance = fbOutputState.GetBalance(fbStakeStateAddress, fbCurrency);
-                                        _fbUsBulkFile.WriteLine(
-                                            $"{fbTip.Index};" +
-                                            "V2;" +
-                                            $"{fbAvatarState.agentAddress.ToString()};" +
-                                            $"{Convert.ToDecimal(fbStakedBalance.GetQuantityString())};" +
-                                            $"{fbStakeState.StartedBlockIndex};" +
-                                            $"{fbStakeState.ReceivedBlockIndex};" +
-                                            $"{fbStakeState.CancellableBlockIndex}"
-                                        );
-                                    }
-
-                                    var fbAgentState = fbOutputState.GetAgentState(fbAvatarState.agentAddress);
-                                    Address fbMonsterCollectionAddress = MonsterCollectionState.DeriveAddress(
-                                        fbAvatarState.agentAddress,
-                                        fbAgentState.MonsterCollectionRound
-                                    );
-                                    if (fbOutputState.TryGetState(fbMonsterCollectionAddress, out Dictionary fbStateDict))
-                                    {
-                                        var fbMonsterCollectionStates = new MonsterCollectionState(fbStateDict);
-                                        var fbCurrency = fbOutputState.GetGoldCurrency();
-                                        FungibleAssetValue fbMonsterCollectionBalance =
-                                            fbOutputState.GetBalance(fbMonsterCollectionAddress, fbCurrency);
-                                        _fbUsBulkFile.WriteLine(
-                                            $"{fbTip.Index};" +
-                                            "V1;" +
-                                            $"{fbAvatarState.agentAddress.ToString()};" +
-                                            $"{Convert.ToDecimal(fbMonsterCollectionBalance.GetQuantityString())};" +
-                                            $"{fbMonsterCollectionStates.StartedBlockIndex};" +
-                                            $"{fbMonsterCollectionStates.ReceivedBlockIndex};" +
-                                            $"{fbMonsterCollectionStates.ExpiredBlockIndex}"
-                                        );
-                                    }
-                                }
+                                fbAvatarState = fbOutputState.GetAvatarStateV2(fbAvatarAddress);
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine(ex.Message);
-                                Console.WriteLine(ex.StackTrace);
+                                fbAvatarState = fbOutputState.GetAvatarState(fbAvatarAddress);
                             }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine(ex.Message);
-                        Console.WriteLine(ex.StackTrace);
-                    }
 
-                    _fbUsBulkFile.Flush();
-                    _fbUsBulkFile.Close();
+                            var fbAvatarLevel = fbAvatarState.level;
 
-                    _fbBarBulkFile.Flush();
-                    _fbBarBulkFile.Close();
-
-                    connection.Open();
-                    var s =
-                        $@"CREATE TABLE IF NOT EXISTS `data_provider`.`{fbUSDbName}` (
-                                  `BlockIndex` bigint NOT NULL,
-                                  `StakeVersion` varchar(100) NOT NULL,
-                                  `AgentAddress` varchar(100) NOT NULL,
-                                  `StakingAmount` decimal(13,2) NOT NULL,
-                                  `StartedBlockIndex` bigint NOT NULL,
-                                  `ReceivedBlockIndex` bigint NOT NULL,
-                                  `CancellableBlockIndex` bigint NOT NULL,
-                                  `Timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;";
-                    var c = new MySqlCommand(s, connection);
-                    c.CommandTimeout = 300;
-                    c.ExecuteScalar();
-                    connection.Close();
-
-                    Console.WriteLine("6");
-
-                    var fbstm23 = $"RENAME TABLE {fbBARDbName} TO {fbBARDbName}_Dump; CREATE TABLE {fbBARDbName} LIKE {fbBARDbName}_Dump;";
-                    var fbcmd23 = new MySqlCommand(fbstm23, connection);
-                    connection.Open();
-                    fbcmd23.CommandTimeout = 300;
-                    fbcmd23.ExecuteScalar();
-                    connection.Close();
-                    Console.WriteLine($"Move {fbBARDbName} Complete!");
-
-                    foreach (var path in _fbUsFiles)
-                    {
-                        BulkInsert(fbUSDbName, path);
-                    }
-
-                    foreach (var path in _fbBarFiles)
-                    {
-                        BulkInsert(fbBARDbName, path);
-                    }
-
-                    var fbstm34 = $"DROP TABLE {fbBARDbName}_Dump;";
-                    var fbcmd34 = new MySqlCommand(fbstm34, connection);
-                    connection.Open();
-                    fbcmd34.CommandTimeout = 300;
-                    fbcmd34.ExecuteScalar();
-                    connection.Close();
-                    Console.WriteLine($"Delete {fbBARDbName}_Dump Complete!");
-                    Console.WriteLine($"Finalize {fbBARDbName} & {fbUSDbName} Tables Complete!");
-                }
-
-                BARDbName = $"{BARDbName}_{arenaData.ChampionshipId}_{arenaData.Round}";
-                Console.WriteLine("1");
-                connection.Open();
-                var stm33 =
-                    $@"CREATE TABLE IF NOT EXISTS `data_provider`.`{BARDbName}` (
-                        `BlockIndex` bigint NOT NULL,
-                        `AgentAddress` varchar(100) NOT NULL,
-                        `AvatarAddress` varchar(100) NOT NULL,
-                        `AvatarLevel` int NOT NULL,
-                        `ChampionshipId` int NOT NULL,
-                        `Round` int NOT NULL,
-                        `ArenaType` varchar(100) NOT NULL,
-                        `Score` int NOT NULL,
-                        `WinCount` int NOT NULL,
-                        `MedalCount` int NOT NULL,
-                        `LossCount` int NOT NULL,
-                        `Ticket` int NOT NULL,
-                        `PurchasedTicketCount` int NOT NULL,
-                        `TicketResetCount` int NOT NULL,
-                        `EntranceFee` bigint NOT NULL,
-                        `TicketPrice` bigint NOT NULL,
-                        `AdditionalTicketPrice` bigint NOT NULL,
-                        `RequiredMedalCount` int NOT NULL,
-                        `StartBlockIndex` bigint NOT NULL,
-                        `EndBlockIndex` bigint NOT NULL,
-                        `Ranking` int NOT NULL,
-                        `Timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        KEY `fk_BattleArenaRanking_Agent1_idx` (`AgentAddress`),
-                        KEY `fk_BattleArenaRanking_AvatarAddress1_idx` (`AvatarAddress`)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;";
-
-                var cmd33 = new MySqlCommand(stm33, connection);
-                cmd33.CommandTimeout = 300;
-                cmd33.ExecuteScalar();
-                connection.Close();
-
-                foreach (var avatar in avatars)
-                {
-                    try
-                    {
-                        intervalCount++;
-                        avatarCount++;
-                        Console.WriteLine("Interval Count {0}", intervalCount);
-                        Console.WriteLine("Migrating {0}/{1}", avatarCount, avatars.Count);
-                        var avatarAddress = new Address(avatar);
-                        try
-                        {
-                            avatarState = outputState.GetAvatarStateV2(avatarAddress);
+                            var fbArenaScoreAdr =
+                            ArenaScore.DeriveAddress(fbAvatarAddress, fbArenaData.ChampionshipId, fbArenaData.Round);
+                            var fbArenaInformationAdr =
+                                ArenaInformation.DeriveAddress(fbAvatarAddress, fbArenaData.ChampionshipId, fbArenaData.Round);
+                            fbOutputState.TryGetArenaInformation(fbArenaInformationAdr, out var fbCurrentArenaInformation);
+                            fbOutputState.TryGetArenaScore(fbArenaScoreAdr, out var fbOutputArenaScore);
+                            if (fbCurrentArenaInformation != null && fbOutputArenaScore != null)
+                            {
+                                _fbBarBulkFile.WriteLine(
+                                    $"{fbTip.Index};" +
+                                    $"{fbAvatarState.agentAddress.ToString()};" +
+                                    $"{fbAvatarAddress.ToString()};" +
+                                    $"{fbAvatarLevel};" +
+                                    $"{fbArenaData.ChampionshipId};" +
+                                    $"{fbArenaData.Round};" +
+                                    $"{fbArenaData.ArenaType.ToString()};" +
+                                    $"{fbOutputArenaScore.Score};" +
+                                    $"{fbCurrentArenaInformation.Win};" +
+                                    $"{fbCurrentArenaInformation.Win};" +
+                                    $"{fbCurrentArenaInformation.Lose};" +
+                                    $"{fbCurrentArenaInformation.Ticket};" +
+                                    $"{fbCurrentArenaInformation.PurchasedTicketCount};" +
+                                    $"{fbCurrentArenaInformation.TicketResetCount};" +
+                                    $"{fbArenaData.EntranceFee};" +
+                                    $"{fbArenaData.TicketPrice};" +
+                                    $"{fbArenaData.AdditionalTicketPrice};" +
+                                    $"{fbArenaData.RequiredMedalCount};" +
+                                    $"{fbArenaData.StartBlockIndex};" +
+                                    $"{fbArenaData.EndBlockIndex};" +
+                                    $"{0};" +
+                                    $"{fbTip.Timestamp.UtcDateTime:yyyy-MM-dd}"
+                                );
+                            }
                         }
                         catch (Exception ex)
                         {
-                            avatarState = outputState.GetAvatarState(avatarAddress);
+                            Console.WriteLine(ex.Message);
+                            Console.WriteLine(ex.StackTrace);
                         }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                }
 
-                        var avatarLevel = avatarState.level;
+                _fbBarBulkFile.Flush();
+                _fbBarBulkFile.Close();
 
-                        var runeSheet = sheets.GetSheet<RuneSheet>();
-                        foreach (var runeType in runeSheet.Values)
-                        {
-#pragma warning disable CS0618
-                            var runeCurrency = Currency.Legacy(runeType.Ticker, 0, minters: null);
-#pragma warning restore CS0618
-                            var outputRuneBalance = outputState.GetBalance(
-                                avatarAddress,
-                                runeCurrency);
-                            if (Convert.ToDecimal(outputRuneBalance.GetQuantityString()) > 0)
-                            {
-                                _urBulkFile.WriteLine(
-                                    $"{tip.Index};" +
-                                    $"{avatarState.agentAddress.ToString()};" +
-                                    $"{avatarAddress.ToString()};" +
-                                    $"{runeType.Ticker};" +
-                                    $"{Convert.ToDecimal(outputRuneBalance.GetQuantityString())};" +
-                                    $"{tip.Timestamp.UtcDateTime:yyyy-MM-dd}"
-                                );
-                            }
-                        }
+                Console.WriteLine("6");
 
-                        var arenaScoreAdr =
-                            ArenaScore.DeriveAddress(avatarAddress, arenaData.ChampionshipId, arenaData.Round);
-                        var arenaInformationAdr =
-                            ArenaInformation.DeriveAddress(avatarAddress, arenaData.ChampionshipId, arenaData.Round);
-                        outputState.TryGetArenaInformation(arenaInformationAdr, out var currentArenaInformation);
-                        outputState.TryGetArenaScore(arenaScoreAdr, out var outputArenaScore);
-                        if (currentArenaInformation != null && outputArenaScore != null)
-                        {
-                            _barBulkFile.WriteLine(
-                                $"{tip.Index};" +
-                                $"{avatarState.agentAddress.ToString()};" +
-                                $"{avatarAddress.ToString()};" +
-                                $"{avatarLevel};" +
-                                $"{arenaData.ChampionshipId};" +
-                                $"{arenaData.Round};" +
-                                $"{arenaData.ArenaType.ToString()};" +
-                                $"{outputArenaScore.Score};" +
-                                $"{currentArenaInformation.Win};" +
-                                $"{currentArenaInformation.Win};" +
-                                $"{currentArenaInformation.Lose};" +
-                                $"{currentArenaInformation.Ticket};" +
-                                $"{currentArenaInformation.PurchasedTicketCount};" +
-                                $"{currentArenaInformation.TicketResetCount};" +
-                                $"{arenaData.EntranceFee};" +
-                                $"{arenaData.TicketPrice};" +
-                                $"{arenaData.AdditionalTicketPrice};" +
-                                $"{arenaData.RequiredMedalCount};" +
-                                $"{arenaData.StartBlockIndex};" +
-                                $"{arenaData.EndBlockIndex};" +
-                                $"{0};" +
-                                $"{tip.Timestamp.UtcDateTime:yyyy-MM-dd}"
-                            );
-                        }
+                var fbstm23 = $"RENAME TABLE {fbBARDbName} TO {fbBARDbName}_Dump; CREATE TABLE {fbBARDbName} LIKE {fbBARDbName}_Dump;";
+                var fbcmd23 = new MySqlCommand(fbstm23, connection);
+                connection.Open();
+                fbcmd23.CommandTimeout = 300;
+                fbcmd23.ExecuteScalar();
+                connection.Close();
+                Console.WriteLine($"Move {fbBARDbName} Complete!");
 
-                        Address orderReceiptAddress = OrderDigestListState.DeriveAddress(avatarAddress);
-                        var orderReceiptList = outputState.TryGetState(orderReceiptAddress, out Dictionary receiptDict)
-                            ? new OrderDigestListState(receiptDict)
-                            : new OrderDigestListState(orderReceiptAddress);
-                        foreach (var orderReceipt in orderReceiptList.OrderDigestList)
-                        {
-                            if (orderReceipt.ExpiredBlockIndex >= tip.Index)
-                            {
-                                var state = outputState.GetState(
-                                    Addresses.GetItemAddress(orderReceipt.TradableId));
-                                ITradableItem orderItem =
-                                    (ITradableItem)ItemFactory.Deserialize((Dictionary)state);
-                                if (orderItem.ItemType == ItemType.Equipment)
-                                {
-                                    var equipment = (Equipment)orderItem;
-                                    Console.WriteLine(equipment.ItemId);
-                                    _seBulkFile.WriteLine(
-                                        $"{equipment.ItemId.ToString()};" +
-                                        $"{tip.Index};" +
-                                        $"{orderReceipt.SellerAgentAddress.ToString()};" +
-                                        $"{avatarAddress.ToString()};" +
-                                        $"{equipment.ItemType.ToString()};" +
-                                        $"{equipment.ItemSubType.ToString()};" +
-                                        $"{equipment.Id};" +
-                                        $"{equipment.BuffSkills.Count};" +
-                                        $"{equipment.ElementalType.ToString()};" +
-                                        $"{equipment.Grade};" +
-                                        $"{equipment.level};" +
-                                        $"{equipment.SetId};" +
-                                        $"{equipment.Skills.Count};" +
-                                        $"{equipment.SpineResourcePath};" +
-                                        $"{equipment.RequiredBlockIndex};" +
-                                        $"{equipment.NonFungibleId.ToString()};" +
-                                        $"{equipment.NonFungibleId.ToString()};" +
-                                        $"{equipment.UniqueStatType.ToString()};" +
-                                        $"{Convert.ToDecimal(orderReceipt.Price.GetQuantityString())};" +
-                                        $"{orderReceipt.OrderId};" +
-                                        $"{orderReceipt.CombatPoint};" +
-                                        $"{orderReceipt.ItemCount};" +
-                                        $"{orderReceipt.StartedBlockIndex};" +
-                                        $"{orderReceipt.ExpiredBlockIndex}"
-                                    );
-                                    shopOrderCount += 1;
-                                }
+                foreach (var path in _fbBarFiles)
+                {
+                    BulkInsert(fbBARDbName, path);
+                }
 
-                                if (orderItem.ItemType == ItemType.Costume)
-                                {
-                                    var costume = (Costume)orderItem;
-                                    Console.WriteLine(costume.ItemId);
-                                    _sctBulkFile.WriteLine(
-                                        $"{costume.ItemId.ToString()};" +
-                                        $"{tip.Index};" +
-                                        $"{orderReceipt.SellerAgentAddress.ToString()};" +
-                                        $"{avatarAddress.ToString()};" +
-                                        $"{costume.ItemType.ToString()};" +
-                                        $"{costume.ItemSubType.ToString()};" +
-                                        $"{costume.Id};" +
-                                        $"{costume.ElementalType.ToString()};" +
-                                        $"{costume.Grade};" +
-                                        $"{costume.Equipped};" +
-                                        $"{costume.SpineResourcePath};" +
-                                        $"{costume.RequiredBlockIndex};" +
-                                        $"{costume.NonFungibleId.ToString()};" +
-                                        $"{costume.TradableId.ToString()};" +
-                                        $"{Convert.ToDecimal(orderReceipt.Price.GetQuantityString())};" +
-                                        $"{orderReceipt.OrderId};" +
-                                        $"{orderReceipt.CombatPoint};" +
-                                        $"{orderReceipt.ItemCount};" +
-                                        $"{orderReceipt.StartedBlockIndex};" +
-                                        $"{orderReceipt.ExpiredBlockIndex}"
-                                    );
-                                    shopOrderCount += 1;
-                                }
+                var fbstm34 = $"DROP TABLE {fbBARDbName}_Dump;";
+                var fbcmd34 = new MySqlCommand(fbstm34, connection);
+                connection.Open();
+                fbcmd34.CommandTimeout = 300;
+                fbcmd34.ExecuteScalar();
+                connection.Close();
+                Console.WriteLine($"Delete {fbBARDbName}_Dump Complete!");
+                Console.WriteLine($"Finalize {fbBARDbName} Tables Complete!");
+            }
 
-                                if (orderItem.ItemType == ItemType.Material)
-                                {
-                                    var material = (Material)orderItem;
-                                    Console.WriteLine(material.ItemId);
-                                    _smBulkFile.WriteLine(
-                                        $"{material.ItemId.ToString()};" +
-                                        $"{tip.Index};" +
-                                        $"{orderReceipt.SellerAgentAddress.ToString()};" +
-                                        $"{avatarAddress.ToString()};" +
-                                        $"{material.ItemType.ToString()};" +
-                                        $"{material.ItemSubType.ToString()};" +
-                                        $"{material.Id};" +
-                                        $"{material.ElementalType.ToString()};" +
-                                        $"{material.Grade};" +
-                                        $"{orderReceipt.TradableId};" +
-                                        $"{Convert.ToDecimal(orderReceipt.Price.GetQuantityString())};" +
-                                        $"{orderReceipt.OrderId};" +
-                                        $"{orderReceipt.CombatPoint};" +
-                                        $"{orderReceipt.ItemCount};" +
-                                        $"{orderReceipt.StartedBlockIndex};" +
-                                        $"{orderReceipt.ExpiredBlockIndex}"
-                                    );
-                                    shopOrderCount += 1;
-                                }
+            BARDbName = $"{BARDbName}_{arenaData.ChampionshipId}_{arenaData.Round}";
+            Console.WriteLine("1");
+            connection.Open();
+            var stm33 =
+                $@"CREATE TABLE IF NOT EXISTS `data_provider`.`{BARDbName}` (
+                    `BlockIndex` bigint NOT NULL,
+                    `AgentAddress` varchar(100) NOT NULL,
+                    `AvatarAddress` varchar(100) NOT NULL,
+                    `AvatarLevel` int NOT NULL,
+                    `ChampionshipId` int NOT NULL,
+                    `Round` int NOT NULL,
+                    `ArenaType` varchar(100) NOT NULL,
+                    `Score` int NOT NULL,
+                    `WinCount` int NOT NULL,
+                    `MedalCount` int NOT NULL,
+                    `LossCount` int NOT NULL,
+                    `Ticket` int NOT NULL,
+                    `PurchasedTicketCount` int NOT NULL,
+                    `TicketResetCount` int NOT NULL,
+                    `EntranceFee` bigint NOT NULL,
+                    `TicketPrice` bigint NOT NULL,
+                    `AdditionalTicketPrice` bigint NOT NULL,
+                    `RequiredMedalCount` int NOT NULL,
+                    `StartBlockIndex` bigint NOT NULL,
+                    `EndBlockIndex` bigint NOT NULL,
+                    `Ranking` int NOT NULL,
+                    `Timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    KEY `fk_BattleArenaRanking_Agent1_idx` (`AgentAddress`),
+                    KEY `fk_BattleArenaRanking_AvatarAddress1_idx` (`AvatarAddress`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;";
 
-                                if (orderItem.ItemType == ItemType.Consumable)
-                                {
-                                    var consumable = (Consumable)orderItem;
-                                    Console.WriteLine(consumable.ItemId);
-                                    _scBulkFile.WriteLine(
-                                        $"{consumable.ItemId.ToString()};" +
-                                        $"{tip.Index};" +
-                                        $"{orderReceipt.SellerAgentAddress.ToString()};" +
-                                        $"{avatarAddress.ToString()};" +
-                                        $"{consumable.ItemType.ToString()};" +
-                                        $"{consumable.ItemSubType.ToString()};" +
-                                        $"{consumable.Id};" +
-                                        $"{consumable.BuffSkills.Count};" +
-                                        $"{consumable.ElementalType.ToString()};" +
-                                        $"{consumable.Grade};" +
-                                        $"{consumable.Skills.Count};" +
-                                        $"{consumable.RequiredBlockIndex};" +
-                                        $"{consumable.NonFungibleId.ToString()};" +
-                                        $"{consumable.TradableId.ToString()};" +
-                                        $"{consumable.MainStat.ToString()};" +
-                                        $"{Convert.ToDecimal(orderReceipt.Price.GetQuantityString())};" +
-                                        $"{orderReceipt.OrderId};" +
-                                        $"{orderReceipt.CombatPoint};" +
-                                        $"{orderReceipt.ItemCount};" +
-                                        $"{orderReceipt.StartedBlockIndex};" +
-                                        $"{orderReceipt.ExpiredBlockIndex}"
-                                    );
-                                    shopOrderCount += 1;
-                                }
+            var cmd33 = new MySqlCommand(stm33, connection);
+            cmd33.CommandTimeout = 300;
+            cmd33.ExecuteScalar();
+            connection.Close();
 
-                                Console.WriteLine(orderReceipt.OrderId);
-                                Console.WriteLine(orderItem.ItemType);
-                            }
-                        }
-
-                        var userEquipments = avatarState.inventory.Equipments;
-                        var userCostumes = avatarState.inventory.Costumes;
-                        var userMaterials = avatarState.inventory.Materials;
-                        var materialItemSheet = outputState.GetSheet<MaterialItemSheet>();
-                        var hourglassRow = materialItemSheet
-                            .First(pair => pair.Value.ItemSubType == ItemSubType.Hourglass)
-                            .Value;
-                        var apStoneRow = materialItemSheet
-                            .First(pair => pair.Value.ItemSubType == ItemSubType.ApStone)
-                            .Value;
-                        var userConsumables = avatarState.inventory.Consumables;
-
-                        foreach (var equipment in userEquipments)
-                        {
-                            var equipmentCp = CPHelper.GetCP(equipment);
-                            WriteEquipment(tip.Index, equipment, avatarState.agentAddress, avatarAddress);
-                            WriteRankingEquipment(equipment, avatarState.agentAddress, avatarAddress, equipmentCp);
-                        }
-
-                        foreach (var costume in userCostumes)
-                        {
-                            WriteCostume(tip.Index, costume, avatarState.agentAddress, avatarAddress);
-                        }
-
-                        foreach (var material in userMaterials)
-                        {
-                            if (material.ItemId.ToString() == hourglassRow.ItemId.ToString())
-                            {
-                                if (!_hourGlassAgentList.Contains(avatarState.agentAddress.ToString()))
-                                {
-                                     var inventoryState = new Inventory((List)avatarState.inventory.Serialize());
-                                     inventoryState.TryGetFungibleItems(hourglassRow.ItemId, out var hourglasses);
-                                     var hourglassesCount = hourglasses.Sum(e => e.count);
-                                     WriteMaterial(tip.Index, material, hourglassesCount, avatarState.agentAddress, avatarAddress);
-                                     _hourGlassAgentList.Add(avatarState.agentAddress.ToString());
-                                }
-                            }
-                            else if (material.ItemId.ToString() == apStoneRow.ItemId.ToString())
-                            {
-                                if (!_apStoneAgentList.Contains(avatarState.agentAddress.ToString()))
-                                {
-                                    var inventoryState = new Inventory((List)avatarState.inventory.Serialize());
-                                    inventoryState.TryGetFungibleItems(apStoneRow.ItemId, out var apStones);
-                                    var apStonesCount = apStones.Sum(e => e.count);
-                                    WriteMaterial(tip.Index, material, apStonesCount, avatarState.agentAddress, avatarAddress);
-                                    _apStoneAgentList.Add(avatarState.agentAddress.ToString());
-                                }
-                            }
-                            else
-                            {
-                                var inventoryState = new Inventory((List)avatarState.inventory.Serialize());
-                                inventoryState.TryGetFungibleItems(material.ItemId, out var materialItem);
-                                var materialCount = materialItem.Sum(e => e.count);
-                                WriteMaterial(tip.Index, material, materialCount, avatarState.agentAddress, avatarAddress);
-                            }
-                        }
-
-                        foreach (var consumable in userConsumables)
-                        {
-                            WriteConsumable(tip.Index, consumable, avatarState.agentAddress, avatarAddress);
-                        }
-
-                        if (!agents.Contains(avatarState.agentAddress.ToString()))
-                        {
-                            agents.Add(avatarState.agentAddress.ToString());
-                            Currency ncgCurrency = outputState.GetGoldCurrency();
-                            var ncgBalance = outputState.GetBalance(
-                                avatarState.agentAddress,
-                                ncgCurrency);
-                            _uncgBulkFile.WriteLine(
-                                $"{tip.Index};" +
-                                $"{avatarState.agentAddress.ToString()};" +
-                                $"{Convert.ToDecimal(ncgBalance.GetQuantityString())}"
-                            );
-                            Currency crystalCurrency = CrystalCalculator.CRYSTAL;
-                            var crystalBalance = outputState.GetBalance(
-                                avatarState.agentAddress,
-                                crystalCurrency);
-                            _ucyBulkFile.WriteLine(
-                                $"{tip.Index};" +
-                                $"{avatarState.agentAddress.ToString()};" +
-                                $"{Convert.ToDecimal(crystalBalance.GetQuantityString())}"
-                            );
-                            var agentState = outputState.GetAgentState(avatarState.agentAddress);
-                            Address monsterCollectionAddress = MonsterCollectionState.DeriveAddress(
-                                avatarState.agentAddress,
-                                agentState.MonsterCollectionRound
-                            );
-                            if (outputState.TryGetState(monsterCollectionAddress, out Dictionary stateDict))
-                            {
-                                var mcStates = new MonsterCollectionState(stateDict);
-                                var currency = outputState.GetGoldCurrency();
-                                FungibleAssetValue mcBalance = outputState.GetBalance(monsterCollectionAddress, currency);
-                                _umcBulkFile.WriteLine(
-                                    $"{tip.Index};" +
-                                    $"{avatarState.agentAddress.ToString()};" +
-                                    $"{Convert.ToDecimal(mcBalance.GetQuantityString())};" +
-                                    $"{mcStates.Level};" +
-                                    $"{mcStates.RewardLevel};" +
-                                    $"{mcStates.StartedBlockIndex};" +
-                                    $"{mcStates.ReceivedBlockIndex};" +
-                                    $"{mcStates.ExpiredBlockIndex}"
-                                );
-                            }
-
-                            if (outputState.TryGetStakeState(avatarState.agentAddress, out StakeState stakeState))
-                            {
-                                var stakeStateAddress = StakeState.DeriveAddress(avatarState.agentAddress);
-                                var currency = outputState.GetGoldCurrency();
-                                var stakedBalance = outputState.GetBalance(stakeStateAddress, currency);
-                                _usBulkFile.WriteLine(
-                                    $"{tip.Index};" +
-                                    $"{avatarState.agentAddress.ToString()};" +
-                                    $"{Convert.ToDecimal(stakedBalance.GetQuantityString())};" +
-                                    $"{stakeState.StartedBlockIndex};" +
-                                    $"{stakeState.ReceivedBlockIndex};" +
-                                    $"{stakeState.CancellableBlockIndex}"
-                                );
-                            }
-                            else
-                            {
-                                if (outputState.TryGetStakeStateV2(avatarState.agentAddress, out StakeStateV2 stakeState2))
-                                {
-                                    var stakeStateAddress = StakeStateV2.DeriveAddress(avatarState.agentAddress);
-                                    var currency = outputState.GetGoldCurrency();
-                                    var stakedBalance = outputState.GetBalance(stakeStateAddress, currency);
-                                    _usBulkFile.WriteLine(
-                                        $"{tip.Index};" +
-                                        $"{avatarState.agentAddress.ToString()};" +
-                                        $"{Convert.ToDecimal(stakedBalance.GetQuantityString())};" +
-                                        $"{stakeState2.StartedBlockIndex};" +
-                                        $"{stakeState2.ReceivedBlockIndex};" +
-                                        $"{stakeState2.CancellableBlockIndex}"
-                                    );
-                                }
-                            }
-                        }
-
-                        Console.WriteLine("Migrating Complete {0}/{1}", avatarCount, avatars.Count);
+            foreach (var avatar in avatars)
+            {
+                try
+                {
+                    intervalCount++;
+                    avatarCount++;
+                    Console.WriteLine("Interval Count {0}", intervalCount);
+                    Console.WriteLine("Migrating {0}/{1}", avatarCount, avatars.Count);
+                    var avatarAddress = new Address(avatar);
+                    try
+                    {
+                        avatarState = outputState.GetAvatarStateV2(avatarAddress);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine(ex.Message);
-                        Console.WriteLine(ex.StackTrace);
+                        avatarState = outputState.GetAvatarState(avatarAddress);
                     }
 
-                    if (intervalCount == interval)
+                    var avatarLevel = avatarState.level;
+
+                    var runeSheet = sheets.GetSheet<RuneSheet>();
+                    foreach (var runeType in runeSheet.Values)
                     {
-                        FlushBulkFiles();
-                        foreach (var path in _agentFiles)
+#pragma warning disable CS0618
+                        var runeCurrency = Currency.Legacy(runeType.Ticker, 0, minters: null);
+#pragma warning restore CS0618
+                        var outputRuneBalance = outputState.GetBalance(
+                            avatarAddress,
+                            runeCurrency);
+                        if (Convert.ToDecimal(outputRuneBalance.GetQuantityString()) > 0)
                         {
-                            BulkInsert(AgentDbName, path);
+                            _urBulkFile.WriteLine(
+                                $"{tip.Index};" +
+                                $"{avatarState.agentAddress.ToString()};" +
+                                $"{avatarAddress.ToString()};" +
+                                $"{runeType.Ticker};" +
+                                $"{Convert.ToDecimal(outputRuneBalance.GetQuantityString())};" +
+                                $"{tip.Timestamp.UtcDateTime:yyyy-MM-dd}"
+                            );
                         }
-
-                        foreach (var path in _avatarFiles)
-                        {
-                            BulkInsert(AvatarDbName, path);
-                        }
-
-                        foreach (var path in _ueFiles)
-                        {
-                            BulkInsert(UEDbName, path);
-                        }
-
-                        foreach (var path in _uctFiles)
-                        {
-                            BulkInsert(UCTDbName, path);
-                        }
-
-                        foreach (var path in _umFiles)
-                        {
-                            BulkInsert(UMDbName, path);
-                        }
-
-                        foreach (var path in _ucFiles)
-                        {
-                            BulkInsert(UCDbName, path);
-                        }
-
-                        foreach (var path in _eFiles)
-                        {
-                            BulkInsert(EDbName, path);
-                        }
-
-                        foreach (var path in _usFiles)
-                        {
-                            BulkInsert(USDbName, path);
-                        }
-
-                        foreach (var path in _umcFiles)
-                        {
-                            BulkInsert(UMCDbName, path);
-                        }
-
-                        foreach (var path in _uncgFiles)
-                        {
-                            BulkInsert(UNCGDbName, path);
-                        }
-
-                        foreach (var path in _ucyFiles)
-                        {
-                            BulkInsert(UCYDbName, path);
-                        }
-
-                        foreach (var path in _scFiles)
-                        {
-                            BulkInsert(SCDbName, path);
-                        }
-
-                        foreach (var path in _seFiles)
-                        {
-                            BulkInsert(SEDbName, path);
-                        }
-
-                        foreach (var path in _sctFiles)
-                        {
-                            BulkInsert(SCTDbName, path);
-                        }
-
-                        foreach (var path in _smFiles)
-                        {
-                            BulkInsert(SMDbName, path);
-                        }
-
-                        foreach (var path in _barFiles)
-                        {
-                            BulkInsert(BARDbName, path);
-                        }
-
-                        foreach (var path in _urFiles)
-                        {
-                            BulkInsert(URDbName, path);
-                        }
-
-                        _agentFiles.RemoveAt(0);
-                        _avatarFiles.RemoveAt(0);
-                        _ueFiles.RemoveAt(0);
-                        _uctFiles.RemoveAt(0);
-                        _umFiles.RemoveAt(0);
-                        _ucFiles.RemoveAt(0);
-                        _eFiles.RemoveAt(0);
-                        _usFiles.RemoveAt(0);
-                        _umcFiles.RemoveAt(0);
-                        _uncgFiles.RemoveAt(0);
-                        _ucyFiles.RemoveAt(0);
-                        _scFiles.RemoveAt(0);
-                        _seFiles.RemoveAt(0);
-                        _sctFiles.RemoveAt(0);
-                        _smFiles.RemoveAt(0);
-                        _barFiles.RemoveAt(0);
-                        _urFiles.RemoveAt(0);
-                        CreateBulkFiles();
-                        intervalCount = 0;
                     }
+
+                    var arenaScoreAdr =
+                        ArenaScore.DeriveAddress(avatarAddress, arenaData.ChampionshipId, arenaData.Round);
+                    var arenaInformationAdr =
+                        ArenaInformation.DeriveAddress(avatarAddress, arenaData.ChampionshipId, arenaData.Round);
+                    outputState.TryGetArenaInformation(arenaInformationAdr, out var currentArenaInformation);
+                    outputState.TryGetArenaScore(arenaScoreAdr, out var outputArenaScore);
+                    if (currentArenaInformation != null && outputArenaScore != null)
+                    {
+                        _barBulkFile.WriteLine(
+                            $"{tip.Index};" +
+                            $"{avatarState.agentAddress.ToString()};" +
+                            $"{avatarAddress.ToString()};" +
+                            $"{avatarLevel};" +
+                            $"{arenaData.ChampionshipId};" +
+                            $"{arenaData.Round};" +
+                            $"{arenaData.ArenaType.ToString()};" +
+                            $"{outputArenaScore.Score};" +
+                            $"{currentArenaInformation.Win};" +
+                            $"{currentArenaInformation.Win};" +
+                            $"{currentArenaInformation.Lose};" +
+                            $"{currentArenaInformation.Ticket};" +
+                            $"{currentArenaInformation.PurchasedTicketCount};" +
+                            $"{currentArenaInformation.TicketResetCount};" +
+                            $"{arenaData.EntranceFee};" +
+                            $"{arenaData.TicketPrice};" +
+                            $"{arenaData.AdditionalTicketPrice};" +
+                            $"{arenaData.RequiredMedalCount};" +
+                            $"{arenaData.StartBlockIndex};" +
+                            $"{arenaData.EndBlockIndex};" +
+                            $"{0};" +
+                            $"{tip.Timestamp.UtcDateTime:yyyy-MM-dd}"
+                        );
+                    }
+
+                    Address orderReceiptAddress = OrderDigestListState.DeriveAddress(avatarAddress);
+                    var orderReceiptList = outputState.TryGetState(orderReceiptAddress, out Dictionary receiptDict)
+                        ? new OrderDigestListState(receiptDict)
+                        : new OrderDigestListState(orderReceiptAddress);
+                    var userEquipments = avatarState.inventory.Equipments;
+                    var userCostumes = avatarState.inventory.Costumes;
+                    var userMaterials = avatarState.inventory.Materials;
+                    var materialItemSheet = outputState.GetSheet<MaterialItemSheet>();
+                    var hourglassRow = materialItemSheet
+                        .First(pair => pair.Value.ItemSubType == ItemSubType.Hourglass)
+                        .Value;
+                    var apStoneRow = materialItemSheet
+                        .First(pair => pair.Value.ItemSubType == ItemSubType.ApStone)
+                        .Value;
+                    var userConsumables = avatarState.inventory.Consumables;
+
+                    Console.WriteLine("Migrating Complete {0}/{1}", avatarCount, avatars.Count);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                    Console.WriteLine(ex.StackTrace);
                 }
 
-                FlushBulkFiles();
-                DateTimeOffset postDataPrep = DateTimeOffset.Now;
-                Console.WriteLine("Data Preparation Complete! Time Elapsed: {0}", postDataPrep - start);
-
-                // var stm2 = $"RENAME TABLE {UEDbName} TO {UEDbName}_Dump; CREATE TABLE {UEDbName} LIKE {UEDbName}_Dump;";
-                // var stm3 = $"RENAME TABLE {UCTDbName} TO {UCTDbName}_Dump; CREATE TABLE {UCTDbName} LIKE {UCTDbName}_Dump;";
-                // var stm4 = $"RENAME TABLE {UMDbName} TO {UMDbName}_Dump; CREATE TABLE {UMDbName} LIKE {UMDbName}_Dump;";
-                // var stm5 = $"RENAME TABLE {UCDbName} TO {UCDbName}_Dump; CREATE TABLE {UCDbName} LIKE {UCDbName}_Dump;";
-                var stm6 = $"RENAME TABLE {EDbName} TO {EDbName}_Dump; CREATE TABLE {EDbName} LIKE {EDbName}_Dump;";
-                // var stm12 = $"RENAME TABLE {USDbName} TO {USDbName}_Dump; CREATE TABLE {USDbName} LIKE {USDbName}_Dump;";
-                // var stm13 = $"RENAME TABLE {UNCGDbName} TO {UNCGDbName}_Dump; CREATE TABLE {UNCGDbName} LIKE {UNCGDbName}_Dump;";
-                // var stm14 = $"RENAME TABLE {UCYDbName} TO {UCYDbName}_Dump; CREATE TABLE {UCYDbName} LIKE {UCYDbName}_Dump;";
-                // var stm15 = $"RENAME TABLE {UMCDbName} TO {UMCDbName}_Dump; CREATE TABLE {UMCDbName} LIKE {UMCDbName}_Dump;";
-                // var stm16 = $"RENAME TABLE {SCDbName} TO {SCDbName}_Dump; CREATE TABLE {SCDbName} LIKE {SCDbName}_Dump;";
-                // var stm17 = $"RENAME TABLE {SEDbName} TO {SEDbName}_Dump; CREATE TABLE {SEDbName} LIKE {SEDbName}_Dump;";
-                // var stm19 = $"RENAME TABLE {SCTDbName} TO {SCTDbName}_Dump; CREATE TABLE {SCTDbName} LIKE {SCTDbName}_Dump;";
-                // var stm20 = $"RENAME TABLE {SMDbName} TO {SMDbName}_Dump; CREATE TABLE {SMDbName} LIKE {SMDbName}_Dump;";
-                var stm23 = $"RENAME TABLE {BARDbName} TO {BARDbName}_Dump; CREATE TABLE {BARDbName} LIKE {BARDbName}_Dump;";
-                // var stm35 = $"RENAME TABLE {URDbName} TO {URDbName}_Dump; CREATE TABLE {URDbName} LIKE {URDbName}_Dump;";
-                // var cmd2 = new MySqlCommand(stm2, connection);
-                // var cmd3 = new MySqlCommand(stm3, connection);
-                // var cmd4 = new MySqlCommand(stm4, connection);
-                // var cmd5 = new MySqlCommand(stm5, connection);
-                var cmd6 = new MySqlCommand(stm6, connection);
-                // var cmd12 = new MySqlCommand(stm12, connection);
-                // var cmd13 = new MySqlCommand(stm13, connection);
-                // var cmd14 = new MySqlCommand(stm14, connection);
-                // var cmd15 = new MySqlCommand(stm15, connection);
-                // var cmd16 = new MySqlCommand(stm16, connection);
-                // var cmd17 = new MySqlCommand(stm17, connection);
-                // var cmd19 = new MySqlCommand(stm19, connection);
-                // var cmd20 = new MySqlCommand(stm20, connection);
-                var cmd23 = new MySqlCommand(stm23, connection);
-                // var cmd35 = new MySqlCommand(stm35, connection);
-                foreach (var path in _agentFiles)
+                if (intervalCount == interval)
                 {
-                    BulkInsert(AgentDbName, path);
-                }
+                    FlushBulkFiles();
+                    foreach (var path in _agentFiles)
+                    {
+                        BulkInsert(AgentDbName, path);
+                    }
 
-                foreach (var path in _avatarFiles)
-                {
-                    BulkInsert(AvatarDbName, path);
-                }
+                    foreach (var path in _avatarFiles)
+                    {
+                        BulkInsert(AvatarDbName, path);
+                    }
 
-                var startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd2.CommandTimeout = 300;
-                // cmd2.ExecuteScalar();
-                // connection.Close();
-                var endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserEquipments Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _ueFiles)
-                {
-                    BulkInsert(UEDbName, path);
-                }
+                    foreach (var path in _barFiles)
+                    {
+                        BulkInsert(BARDbName, path);
+                    }
 
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd3.CommandTimeout = 300;
-                // cmd3.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserCostumes Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _uctFiles)
-                {
-                    BulkInsert(UCTDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd4.CommandTimeout = 300;
-                // cmd4.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserMaterials Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _umFiles)
-                {
-                    BulkInsert(UMDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd5.CommandTimeout = 300;
-                // cmd5.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserConsumables Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _ucFiles)
-                {
-                    BulkInsert(UCDbName, path);
-                }
-
-                startMove = DateTimeOffset.Now;
-                connection.Open();
-                cmd6.CommandTimeout = 300;
-                cmd6.ExecuteScalar();
-                connection.Close();
-                endMove = DateTimeOffset.Now;
-                Console.WriteLine("Move Equipments Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _eFiles)
-                {
-                    BulkInsert(EDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd12.CommandTimeout = 300;
-                // cmd12.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserStakings Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _usFiles)
-                {
-                    BulkInsert(USDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd13.CommandTimeout = 300;
-                // cmd13.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserNCGs Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _uncgFiles)
-                {
-                    BulkInsert(UNCGDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd14.CommandTimeout = 300;
-                // cmd14.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserCrystals Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _ucyFiles)
-                {
-                    BulkInsert(UCYDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd15.CommandTimeout = 300;
-                // cmd15.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserMonsterCollections Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _umcFiles)
-                {
-                    BulkInsert(UMCDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd16.CommandTimeout = 300;
-                // cmd16.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move ShopConsumables Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _scFiles)
-                {
-                    BulkInsert(SCDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd17.CommandTimeout = 300;
-                // cmd17.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move ShopEquipments Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _seFiles)
-                {
-                    BulkInsert(SEDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd19.CommandTimeout = 300;
-                // cmd19.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move ShopCostumes Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _sctFiles)
-                {
-                    BulkInsert(SCTDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd20.CommandTimeout = 300;
-                // cmd20.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move ShopMaterials Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _smFiles)
-                {
-                    BulkInsert(SMDbName, path);
-                }
-
-                startMove = DateTimeOffset.Now;
-                connection.Open();
-                cmd23.CommandTimeout = 300;
-                cmd23.ExecuteScalar();
-                connection.Close();
-                endMove = DateTimeOffset.Now;
-                Console.WriteLine("Move BattleArenaRanking Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _barFiles)
-                {
-                    BulkInsert(BARDbName, path);
-                }
-
-                // startMove = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd35.CommandTimeout = 300;
-                // cmd35.ExecuteScalar();
-                // connection.Close();
-                // endMove = DateTimeOffset.Now;
-                // Console.WriteLine("Move UserRunes Complete! Time Elapsed: {0}", endMove - startMove);
-                foreach (var path in _urFiles)
-                {
-                    BulkInsert(URDbName, path);
+                    _agentFiles.RemoveAt(0);
+                    _avatarFiles.RemoveAt(0);
+                    CreateBulkFiles();
+                    intervalCount = 0;
                 }
             }
-            catch (Exception e)
+
+            FlushBulkFiles();
+            DateTimeOffset postDataPrep = DateTimeOffset.Now;
+            Console.WriteLine("Data Preparation Complete! Time Elapsed: {0}", postDataPrep - start);
+
+            var stm23 = $"RENAME TABLE {BARDbName} TO {BARDbName}_Dump; CREATE TABLE {BARDbName} LIKE {BARDbName}_Dump;";
+            var cmd23 = new MySqlCommand(stm23, connection);
+            foreach (var path in _agentFiles)
             {
-                // Console.WriteLine(e.Message);
-                // Console.WriteLine("Restoring previous tables due to error...");
-                // var stm12 = $"DROP TABLE {UEDbName}; RENAME TABLE {UEDbName}_Dump TO {UEDbName};";
-                // var stm13 = $"DROP TABLE {EDbName}; RENAME TABLE {UCTDbName}_Dump TO {UCTDbName};";
-                // var stm14 = $"DROP TABLE {EDbName}; RENAME TABLE {UMDbName}_Dump TO {UMDbName};";
-                // var stm15 = $"DROP TABLE {EDbName}; RENAME TABLE {UCDbName}_Dump TO {UCDbName};";
-                var stm16 = $"DROP TABLE {EDbName}; RENAME TABLE {EDbName}_Dump TO {EDbName};";
-                // var stm17 = $"DROP TABLE {USDbName}; RENAME TABLE {USDbName}_Dump TO {USDbName};";
-                // var stm19 = $"DROP TABLE {UNCGDbName}; RENAME TABLE {UNCGDbName}_Dump TO {UNCGDbName};";
-                // var stm20 = $"DROP TABLE {UCYDbName}; RENAME TABLE {UCYDbName}_Dump TO {UCYDbName};";
-                // var stm23 = $"DROP TABLE {UMCDbName}; RENAME TABLE {UMCDbName}_Dump TO {UMCDbName};";
-                // var stm25 = $"DROP TABLE {SCDbName}; RENAME TABLE {SCDbName}_Dump TO {SCDbName};";
-                // var stm26 = $"DROP TABLE {SEDbName}; RENAME TABLE {SEDbName}_Dump TO {SEDbName};";
-                // var stm27 = $"DROP TABLE {SCTDbName}; RENAME TABLE {SCTDbName}_Dump TO {SCTDbName};";
-                // var stm28 = $"DROP TABLE {SMDbName}; RENAME TABLE {SMDbName}_Dump TO {SMDbName};";
-                var stm33 = $"DROP TABLE {BARDbName}; RENAME TABLE {BARDbName}_Dump TO {BARDbName};";
-                // var stm36 = $"DROP TABLE {URDbName}; RENAME TABLE {URDbName}_Dump TO {URDbName};";
-                // var cmd12 = new MySqlCommand(stm12, connection);
-                // var cmd13 = new MySqlCommand(stm13, connection);
-                // var cmd14 = new MySqlCommand(stm14, connection);
-                // var cmd15 = new MySqlCommand(stm15, connection);
-                var cmd16 = new MySqlCommand(stm16, connection);
-                // var cmd17 = new MySqlCommand(stm17, connection);
-                // var cmd19 = new MySqlCommand(stm19, connection);
-                // var cmd20 = new MySqlCommand(stm20, connection);
-                // var cmd23 = new MySqlCommand(stm23, connection);
-                // var cmd25 = new MySqlCommand(stm25, connection);
-                // var cmd26 = new MySqlCommand(stm26, connection);
-                // var cmd27 = new MySqlCommand(stm27, connection);
-                // var cmd28 = new MySqlCommand(stm28, connection);
-                var cmd33 = new MySqlCommand(stm33, connection);
-                // var cmd36 = new MySqlCommand(stm36, connection);
-                var startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd12.CommandTimeout = 300;
-                // cmd12.ExecuteScalar();
-                // connection.Close();
-                var endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserEquipments Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd13.CommandTimeout = 300;
-                // cmd13.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserCostumes Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd14.CommandTimeout = 300;
-                // cmd14.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserMaterials Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd15.CommandTimeout = 300;
-                // cmd15.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserConsumables Complete! Time Elapsed: {0}", endRestore - startRestore);
-                startRestore = DateTimeOffset.Now;
-                connection.Open();
-                cmd16.CommandTimeout = 300;
-                cmd16.ExecuteScalar();
-                connection.Close();
-                endRestore = DateTimeOffset.Now;
-                Console.WriteLine("Restore Equipments Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd17.CommandTimeout = 300;
-                // cmd17.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserStakings Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd19.CommandTimeout = 300;
-                // cmd19.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserNCGs Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd20.CommandTimeout = 300;
-                // cmd20.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserCrystals Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd23.CommandTimeout = 300;
-                // cmd23.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserMonsterCollections Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd25.CommandTimeout = 300;
-                // cmd25.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore ShopConsumables Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd26.CommandTimeout = 300;
-                // cmd26.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore ShopEquipments Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd27.CommandTimeout = 300;
-                // cmd27.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore ShopCostumes Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd28.CommandTimeout = 300;
-                // cmd28.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore ShopMaterials Complete! Time Elapsed: {0}", endRestore - startRestore);
-                startRestore = DateTimeOffset.Now;
-                connection.Open();
-                cmd33.CommandTimeout = 300;
-                cmd33.ExecuteScalar();
-                connection.Close();
-                endRestore = DateTimeOffset.Now;
-                Console.WriteLine("Restore BattleArenaRanking Complete! Time Elapsed: {0}", endRestore - startRestore);
-                // startRestore = DateTimeOffset.Now;
-                // connection.Open();
-                // cmd36.CommandTimeout = 300;
-                // cmd36.ExecuteScalar();
-                // connection.Close();
-                // endRestore = DateTimeOffset.Now;
-                // Console.WriteLine("Restore UserRunes Complete! Time Elapsed: {0}", endRestore - startRestore);
+                BulkInsert(AgentDbName, path);
             }
 
-            // var stm7 = $"DROP TABLE {UEDbName}_Dump;";
-            // var stm8 = $"DROP TABLE {UCTDbName}_Dump;";
-            // var stm9 = $"DROP TABLE {UMDbName}_Dump;";
-            // var stm10 = $"DROP TABLE {UCDbName}_Dump;";
-            var stm11 = $"DROP TABLE {EDbName}_Dump;";
-            // var stm18 = $"DROP TABLE {USDbName}_Dump;";
-            // var stm21 = $"DROP TABLE {UNCGDbName}_Dump;";
-            // var stm22 = $"DROP TABLE {UCYDbName}_Dump;";
-            // var stm24 = $"DROP TABLE {UMCDbName}_Dump;";
-            // var stm29 = $"DROP TABLE {SCDbName}_Dump;";
-            // var stm30 = $"DROP TABLE {SEDbName}_Dump;";
-            // var stm31 = $"DROP TABLE {SCTDbName}_Dump;";
-            // var stm32 = $"DROP TABLE {SMDbName}_Dump;";
-            var stm34 = $"DROP TABLE {BARDbName}_Dump;";
-            // var stm37 = $"DROP TABLE {URDbName}_Dump;";
-            // var cmd7 = new MySqlCommand(stm7, connection);
-            // var cmd8 = new MySqlCommand(stm8, connection);
-            // var cmd9 = new MySqlCommand(stm9, connection);
-            // var cmd10 = new MySqlCommand(stm10, connection);
-            var cmd11 = new MySqlCommand(stm11, connection);
-            // var cmd18 = new MySqlCommand(stm18, connection);
-            // var cmd21 = new MySqlCommand(stm21, connection);
-            // var cmd22 = new MySqlCommand(stm22, connection);
-            // var cmd24 = new MySqlCommand(stm24, connection);
-            // var cmd29 = new MySqlCommand(stm29, connection);
-            // var cmd30 = new MySqlCommand(stm30, connection);
-            // var cmd31 = new MySqlCommand(stm31, connection);
-            // var cmd32 = new MySqlCommand(stm32, connection);
-            var cmd34 = new MySqlCommand(stm34, connection);
-            // var cmd37 = new MySqlCommand(stm37, connection);
-            var startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd7.CommandTimeout = 300;
-            // cmd7.ExecuteScalar();
-            // connection.Close();
-            var endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserEquipments_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd8.CommandTimeout = 300;
-            // cmd8.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserCostumes_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd9.CommandTimeout = 300;
-            // cmd9.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserMaterials_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd10.CommandTimeout = 300;
-            // cmd10.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserConsumables_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            startDelete = DateTimeOffset.Now;
+            foreach (var path in _avatarFiles)
+            {
+                BulkInsert(AvatarDbName, path);
+            }
+
+            var startMove = DateTimeOffset.Now;
+            var endMove = DateTimeOffset.Now;
+
+            startMove = DateTimeOffset.Now;
             connection.Open();
-            cmd11.CommandTimeout = 300;
-            cmd11.ExecuteScalar();
+            cmd23.CommandTimeout = 300;
+            cmd23.ExecuteScalar();
             connection.Close();
+            endMove = DateTimeOffset.Now;
+            Console.WriteLine("Move BattleArenaRanking Complete! Time Elapsed: {0}", endMove - startMove);
+            foreach (var path in _barFiles)
+            {
+                BulkInsert(BARDbName, path);
+            }
+
+            var stm34 = $"DROP TABLE {BARDbName}_Dump;";
+            var cmd34 = new MySqlCommand(stm34, connection);
+            var startDelete = DateTimeOffset.Now;
+            var endDelete = DateTimeOffset.Now;
+            startDelete = DateTimeOffset.Now;
             endDelete = DateTimeOffset.Now;
             Console.WriteLine("Delete Equipments_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd18.CommandTimeout = 300;
-            // cmd18.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserStakings_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd21.CommandTimeout = 300;
-            // cmd21.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserNCGs_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd22.CommandTimeout = 300;
-            // cmd22.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserCrystals_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd24.CommandTimeout = 300;
-            // cmd24.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserMonsterCollections_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd29.CommandTimeout = 300;
-            // cmd29.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete ShopConsumables_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd30.CommandTimeout = 300;
-            // cmd30.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete ShopEquipments_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd31.CommandTimeout = 300;
-            // cmd31.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete ShopCostumes_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd32.CommandTimeout = 300;
-            // cmd32.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete ShopMaterials_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
             startDelete = DateTimeOffset.Now;
             connection.Open();
             cmd34.CommandTimeout = 300;
@@ -1519,13 +566,6 @@ namespace NineChronicles.DataProvider.Tools.SubCommand
             connection.Close();
             endDelete = DateTimeOffset.Now;
             Console.WriteLine("Delete BattleArenaRanking_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
-            // startDelete = DateTimeOffset.Now;
-            // connection.Open();
-            // cmd37.CommandTimeout = 300;
-            // cmd37.ExecuteScalar();
-            // connection.Close();
-            // endDelete = DateTimeOffset.Now;
-            // Console.WriteLine("Delete UserRunes_Dump Complete! Time Elapsed: {0}", endDelete - startDelete);
 
             DateTimeOffset end = DateTimeOffset.UtcNow;
             Console.WriteLine("Migration Complete! Time Elapsed: {0}", end - start);
@@ -1539,57 +579,6 @@ namespace NineChronicles.DataProvider.Tools.SubCommand
 
             _avatarBulkFile.Flush();
             _avatarBulkFile.Close();
-
-            _ccBulkFile.Flush();
-            _ccBulkFile.Close();
-
-            _ceBulkFile.Flush();
-            _ceBulkFile.Close();
-
-            _ieBulkFile.Flush();
-            _ieBulkFile.Close();
-
-            _ueBulkFile.Flush();
-            _ueBulkFile.Close();
-
-            _uctBulkFile.Flush();
-            _uctBulkFile.Close();
-
-            _uiBulkFile.Flush();
-            _uiBulkFile.Close();
-
-            _umBulkFile.Flush();
-            _umBulkFile.Close();
-
-            _ucBulkFile.Flush();
-            _ucBulkFile.Close();
-
-            _eBulkFile.Flush();
-            _eBulkFile.Close();
-
-            _usBulkFile.Flush();
-            _usBulkFile.Close();
-
-            _umcBulkFile.Flush();
-            _umcBulkFile.Close();
-
-            _uncgBulkFile.Flush();
-            _uncgBulkFile.Close();
-
-            _ucyBulkFile.Flush();
-            _ucyBulkFile.Close();
-
-            _scBulkFile.Flush();
-            _scBulkFile.Close();
-
-            _seBulkFile.Flush();
-            _seBulkFile.Close();
-
-            _sctBulkFile.Flush();
-            _sctBulkFile.Close();
-
-            _smBulkFile.Flush();
-            _smBulkFile.Close();
 
             _barBulkFile.Flush();
             _barBulkFile.Close();
@@ -1606,57 +595,6 @@ namespace NineChronicles.DataProvider.Tools.SubCommand
             string avatarFilePath = Path.GetTempFileName();
             _avatarBulkFile = new StreamWriter(avatarFilePath);
 
-            string ccFilePath = Path.GetTempFileName();
-            _ccBulkFile = new StreamWriter(ccFilePath);
-
-            string ceFilePath = Path.GetTempFileName();
-            _ceBulkFile = new StreamWriter(ceFilePath);
-
-            string ieFilePath = Path.GetTempFileName();
-            _ieBulkFile = new StreamWriter(ieFilePath);
-
-            string ueFilePath = Path.GetTempFileName();
-            _ueBulkFile = new StreamWriter(ueFilePath);
-
-            string uctFilePath = Path.GetTempFileName();
-            _uctBulkFile = new StreamWriter(uctFilePath);
-
-            string uiFilePath = Path.GetTempFileName();
-            _uiBulkFile = new StreamWriter(uiFilePath);
-
-            string umFilePath = Path.GetTempFileName();
-            _umBulkFile = new StreamWriter(umFilePath);
-
-            string ucFilePath = Path.GetTempFileName();
-            _ucBulkFile = new StreamWriter(ucFilePath);
-
-            string eFilePath = Path.GetTempFileName();
-            _eBulkFile = new StreamWriter(eFilePath);
-
-            string usFilePath = Path.GetTempFileName();
-            _usBulkFile = new StreamWriter(usFilePath);
-
-            string umcFilePath = Path.GetTempFileName();
-            _umcBulkFile = new StreamWriter(umcFilePath);
-
-            string uncgFilePath = Path.GetTempFileName();
-            _uncgBulkFile = new StreamWriter(uncgFilePath);
-
-            string ucyFilePath = Path.GetTempFileName();
-            _ucyBulkFile = new StreamWriter(ucyFilePath);
-
-            string scFilePath = Path.GetTempFileName();
-            _scBulkFile = new StreamWriter(scFilePath);
-
-            string seFilePath = Path.GetTempFileName();
-            _seBulkFile = new StreamWriter(seFilePath);
-
-            string sctFilePath = Path.GetTempFileName();
-            _sctBulkFile = new StreamWriter(sctFilePath);
-
-            string smFilePath = Path.GetTempFileName();
-            _smBulkFile = new StreamWriter(smFilePath);
-
             string barFilePath = Path.GetTempFileName();
             _barBulkFile = new StreamWriter(barFilePath);
 
@@ -1666,32 +604,10 @@ namespace NineChronicles.DataProvider.Tools.SubCommand
             string fbBarFilePath = Path.GetTempFileName();
             _fbBarBulkFile = new StreamWriter(fbBarFilePath);
 
-            string fbUsFilePath = Path.GetTempFileName();
-            _fbUsBulkFile = new StreamWriter(fbUsFilePath);
-
             _agentFiles.Add(agentFilePath);
             _avatarFiles.Add(avatarFilePath);
-            _ccFiles.Add(ccFilePath);
-            _ceFiles.Add(ceFilePath);
-            _ieFiles.Add(ieFilePath);
-            _ueFiles.Add(ueFilePath);
-            _uctFiles.Add(uctFilePath);
-            _uiFiles.Add(uiFilePath);
-            _umFiles.Add(umFilePath);
-            _ucFiles.Add(ucFilePath);
-            _eFiles.Add(eFilePath);
-            _usFiles.Add(usFilePath);
-            _umcFiles.Add(umcFilePath);
-            _uncgFiles.Add(uncgFilePath);
-            _ucyFiles.Add(ucyFilePath);
-            _scFiles.Add(scFilePath);
-            _seFiles.Add(seFilePath);
-            _sctFiles.Add(sctFilePath);
-            _smFiles.Add(smFilePath);
             _barFiles.Add(barFilePath);
-            _urFiles.Add(urFilePath);
             _fbBarFiles.Add(fbBarFilePath);
-            _fbUsFiles.Add(fbUsFilePath);
         }
 
         private void BulkInsert(
@@ -1741,291 +657,6 @@ namespace NineChronicles.DataProvider.Tools.SubCommand
                 DateTimeOffset end = DateTimeOffset.Now;
                 Console.WriteLine("Time elapsed: {0}", end - start);
             }
-        }
-
-        private void WriteEquipment(
-            long tipIndex,
-            Equipment equipment,
-            Address agentAddress,
-            Address avatarAddress)
-        {
-            try
-            {
-                _ueBulkFile.WriteLine(
-                    $"{tipIndex};" +
-                    $"{equipment.ItemId.ToString()};" +
-                    $"{agentAddress.ToString()};" +
-                    $"{avatarAddress.ToString()};" +
-                    $"{equipment.ItemType.ToString()};" +
-                    $"{equipment.ItemSubType.ToString()};" +
-                    $"{equipment.Id};" +
-                    $"{equipment.BuffSkills.Count};" +
-                    $"{equipment.ElementalType.ToString()};" +
-                    $"{equipment.Grade};" +
-                    $"{equipment.level};" +
-                    $"{equipment.SetId};" +
-                    $"{equipment.Skills.Count};" +
-                    $"{equipment.SpineResourcePath};" +
-                    $"{equipment.RequiredBlockIndex};" +
-                    $"{equipment.NonFungibleId.ToString()};" +
-                    $"{equipment.NonFungibleId.ToString()};" +
-                    $"{equipment.UniqueStatType.ToString()}"
-                );
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-        }
-
-        private void WriteRankingEquipment(
-            Equipment equipment,
-            Address agentAddress,
-            Address avatarAddress,
-            int equipmentCp)
-        {
-            try
-            {
-                _eBulkFile.WriteLine(
-                    $"{equipment.ItemId.ToString()};" +
-                    $"{agentAddress.ToString()};" +
-                    $"{avatarAddress.ToString()};" +
-                    $"{equipment.Id};" +
-                    $"{equipmentCp};" +
-                    $"{equipment.level};" +
-                    $"{equipment.ItemSubType.ToString()}"
-                );
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-        }
-
-        private void WriteCostume(
-            long tipIndex,
-            Costume costume,
-            Address agentAddress,
-            Address avatarAddress)
-        {
-            try
-            {
-                _uctBulkFile.WriteLine(
-                    $"{tipIndex};" +
-                    $"{costume.ItemId.ToString()};" +
-                    $"{agentAddress.ToString()};" +
-                    $"{avatarAddress.ToString()};" +
-                    $"{costume.ItemType.ToString()};" +
-                    $"{costume.ItemSubType.ToString()};" +
-                    $"{costume.Id};" +
-                    $"{costume.ElementalType.ToString()};" +
-                    $"{costume.Grade};" +
-                    $"{costume.Equipped};" +
-                    $"{costume.SpineResourcePath};" +
-                    $"{costume.RequiredBlockIndex};" +
-                    $"{costume.NonFungibleId.ToString()};" +
-                    $"{costume.TradableId.ToString()}"
-                );
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-        }
-
-        private void WriteMaterial(
-            long tipIndex,
-            Material material,
-            int materialCount,
-            Address agentAddress,
-            Address avatarAddress)
-        {
-            try
-            {
-                _umBulkFile.WriteLine(
-                    $"{tipIndex};" +
-                    $"{material.ItemId.ToString()};" +
-                    $"{agentAddress.ToString()};" +
-                    $"{avatarAddress.ToString()};" +
-                    $"{material.ItemType.ToString()};" +
-                    $"{material.ItemSubType.ToString()};" +
-                    $"{materialCount};" +
-                    $"{material.Id};" +
-                    $"{material.ElementalType.ToString()};" +
-                    $"{material.Grade}"
-                );
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-        }
-
-        private void WriteConsumable(
-            long tipIndex,
-            Consumable consumable,
-            Address agentAddress,
-            Address avatarAddress)
-        {
-            try
-            {
-                _ucBulkFile.WriteLine(
-                    $"{tipIndex};" +
-                    $"{consumable.ItemId.ToString()};" +
-                    $"{agentAddress.ToString()};" +
-                    $"{avatarAddress.ToString()};" +
-                    $"{consumable.ItemType.ToString()};" +
-                    $"{consumable.ItemSubType.ToString()};" +
-                    $"{consumable.Id};" +
-                    $"{consumable.BuffSkills.Count};" +
-                    $"{consumable.ElementalType.ToString()};" +
-                    $"{consumable.Grade};" +
-                    $"{consumable.Skills.Count};" +
-                    $"{consumable.RequiredBlockIndex};" +
-                    $"{consumable.NonFungibleId.ToString()};" +
-                    $"{consumable.TradableId.ToString()};" +
-                    $"{consumable.MainStat.ToString()}"
-                );
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-        }
-
-
-        private void WriteAgent(
-            Address? agentAddress)
-        {
-            if (agentAddress == null)
-            {
-                return;
-            }
-
-            // _agentBulkFile.WriteLine(
-            //     $"{agentAddress.ToString()}");
-            // _agentList.Add(agentAddress.ToString());
-            // check if address is already in _agentList
-            if (!_agentList.Contains(agentAddress.ToString()))
-            {
-                _agentBulkFile.WriteLine(
-                    $"{agentAddress.ToString()}");
-                _agentList.Add(agentAddress.ToString());
-            }
-        }
-
-        private void WriteAvatar(
-            Address? agentAddress,
-            Address? avatarAddress,
-            string avatarName,
-            int avatarLevel,
-            int? avatarTitleId,
-            int avatarArmorId,
-            int avatarCp)
-        {
-            if (agentAddress == null)
-            {
-                return;
-            }
-
-            if (avatarAddress == null)
-            {
-                return;
-            }
-
-            if (!_avatarList.Contains(avatarAddress.ToString()))
-            {
-                _avatarBulkFile.WriteLine(
-                    $"{avatarAddress.ToString()};" +
-                    $"{agentAddress.ToString()};" +
-                    $"{avatarName};" +
-                    $"{avatarLevel};" +
-                    $"{avatarTitleId};" +
-                    $"{avatarArmorId};" +
-                    $"{avatarCp}");
-                _avatarList.Add(avatarAddress.ToString());
-            }
-        }
-
-        private void WriteCE(
-            Guid id,
-            Address agentAddress,
-            Address avatarAddress,
-            int recipeId,
-            int slotIndex,
-            int? subRecipeId,
-            long blockIndex)
-        {
-            // check if address is already in _agentList
-            if (!_agentList.Contains(agentAddress.ToString()))
-            {
-                _agentBulkFile.WriteLine(
-                    $"{agentAddress.ToString()};");
-                _agentList.Add(agentAddress.ToString());
-            }
-
-            // check if address is already in _avatarList
-            if (!_avatarList.Contains(avatarAddress.ToString()))
-            {
-                _avatarBulkFile.WriteLine(
-                    $"{avatarAddress.ToString()};" +
-                    $"{agentAddress.ToString()};" +
-                    "N/A");
-                _avatarList.Add(avatarAddress.ToString());
-            }
-
-            _ceBulkFile.WriteLine(
-                $"{id.ToString()};" +
-                $"{avatarAddress.ToString()};" +
-                $"{agentAddress.ToString()};" +
-                $"{recipeId};" +
-                $"{slotIndex};" +
-                $"{subRecipeId ?? 0};" +
-                $"{blockIndex.ToString()}");
-            Console.WriteLine("Writing CE action in block #{0}", blockIndex);
-        }
-
-        private void WriteIE(
-            Guid id,
-            Address agentAddress,
-            Address avatarAddress,
-            Guid itemId,
-            Guid materialId,
-            int slotIndex,
-            long blockIndex)
-        {
-            // check if address is already in _agentList
-            if (!_agentList.Contains(agentAddress.ToString()))
-            {
-                _agentBulkFile.WriteLine(
-                    $"{agentAddress.ToString()};");
-                _agentList.Add(agentAddress.ToString());
-            }
-
-            // check if address is already in _avatarList
-            if (!_avatarList.Contains(avatarAddress.ToString()))
-            {
-                _avatarBulkFile.WriteLine(
-                    $"{avatarAddress.ToString()};" +
-                    $"{agentAddress.ToString()};" +
-                    "N/A");
-                _avatarList.Add(avatarAddress.ToString());
-            }
-
-            _ieBulkFile.WriteLine(
-                $"{id.ToString()};" +
-                $"{avatarAddress.ToString()};" +
-                $"{agentAddress.ToString()};" +
-                $"{itemId.ToString()};" +
-                $"{materialId.ToString()};" +
-                $"{slotIndex};" +
-                $"{blockIndex.ToString()}");
-            Console.WriteLine("Writing IE action in block #{0}", blockIndex);
         }
     }
 }
